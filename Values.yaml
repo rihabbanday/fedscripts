@@ -1,0 +1,10 @@
+isClusterService: false
+serviceType: "NodePort"
+middleware:
+  kubernetes:
+    enabled: false
+  etcd:
+    enabled: true
+    zones:
+    - "comp.com."
+    endpoint: http://etcd-cluster.default:2379

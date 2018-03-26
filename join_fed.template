@@ -1,0 +1,80 @@
+#a cluster name which displayed in federation
+JOIN_CLUSTER=edge-cluster
+#local cluster info
+CA_PATH=/etc/kubernetes/pki
+#not sure $HOME/.kube/config exists or not, so use admin.conf instead
+CONFIG=/etc/kubernetes/admin.conf
+# parse kube config file to get info
+RAW_URL=""
+LINE=""
+N=0
+NUM=$(sudo cat $CONFIG |wc -l)
+getline() {  N=$(expr $N + 1); LINE=$(sudo sed -n ${N}p $CONFIG); }
+while [ $N -le $NUM ]
+do
+        getline
+        case $LINE in
+        "- cluster:")
+                getline; TMP_CA="$LINE"
+                getline; TMP_SERVER="$LINE"
+                getline; TMP_NAME="$LINE"
+                NEED=$(echo $TMP_NAME |grep "kubernetes")
+                if [ -n "$NEED" ]; then
+                        RAW_URL="$TMP_SERVER"
+                fi
+                ;;
+        *) ;;
+        esac
+done
+
+LOCAL_SERVER=$(echo $RAW_URL | sudo awk '{split($0,a," ");print a[2]}')
+echo "LOCAL_SERVER=$LOCAL_SERVER"
+LOCAL_USER=kubernetes-admin
+LOCAL_CLUSTER=kubernetes
+LOCAL_CONTEXT=kubernetes-admin@kubernetes
+LOCAL_ROOT_CA=$CA_PATH/ca.crt
+LOCAL_CLIENT_CA=$CA_PATH/apiserver-kubelet-client.crt
+LOCAL_CLIENT_KEY=$CA_PATH/apiserver-kubelet-client.key
+
+#folder to store CA files from FCP and host cluster
+FED_CA_PATH=$CA_PATH/fed
+
+#FCP info
+CTL_SERVER=$CTL_URL
+CTL_USER=federation
+CTL_CLUSTER=federation
+CTL_CONTEXT=federation
+CTL_ROOT_CA=$FED_CA_PATH/fed.ca
+CTL_CLIENT_CA=$FED_CA_PATH/fed.crt
+CTL_CLIENT_KEY=$FED_CA_PATH/fed.key
+
+#cluster that hosts FCP
+HOST_SERVER=$HOST_URL
+HOST_USER=central-cluster
+HOST_CLUSTER=central-cluster
+HOST_CONTEXT=central-cluster
+HOST_ROOT_CA=$FED_CA_PATH/ca.crt
+HOST_CLIENT_CA=$FED_CA_PATH/apiserver-kubelet-client.crt
+HOST_CLIENT_KEY=$FED_CA_PATH/apiserver-kubelet-client.key
+
+if [ ! -d "$FED_CA_PATH" ]; then
+        sudo mkdir $FED_CA_PATH
+fi
+
+sudo cp ./* $FED_CA_PATH/
+
+echo "set kube config"
+kubectl config set-cluster $CTL_CLUSTER --server=$CTL_SERVER --certificate-authority=$CTL_ROOT_CA
+kubectl config set-credentials $CTL_USER --client-key=$CTL_CLIENT_KEY --client-certificate=$CTL_CLIENT_CA
+kubectl config set-context $CTL_CONTEXT --cluster=$CTL_CLUSTER --user=$CTL_USER
+
+kubectl config set-cluster $HOST_CLUSTER --server=$HOST_SERVER --certificate-authority=$HOST_ROOT_CA
+kubectl config set-credentials $HOST_USER --client-key=$HOST_CLIENT_KEY --client-certificate=$HOST_CLIENT_CA
+kubectl config set-context $HOST_CONTEXT --cluster=$HOST_CLUSTER --user=$HOST_USER
+
+echo "ready to join federation"
+kubefed --context=$CTL_CONTEXT join $JOIN_CLUSTER --cluster-context=$LOCAL_CONTEXT --host-cluster-context=$HOST_CONTEXT
+kubectl --context=$CTL_CONTEXT get clusters
+
+echo "To cancel join, please use following command:"
+echo "kubefed unjoin $JOIN_CLUSTER --host-cluster-context=$HOST_CONTEXT --context=$CTL_CONTEXT"
